@@ -1100,7 +1100,12 @@ class Rbd(Image):
                                 protect=True)
         return ('rbd://%(fsid)s/%(pool)s/%(image)s/snap' %
                 dict(fsid=fsid, pool=parent_pool, image=image_id))
+        
+    def rollback_snapshot(self, context, snapshot_name, image_format,image_id, base_image_id):
 
+        self.driver.rollback_to_snap(self.rbd_name, snapshot_name, protect=True)
+    # edit here
+        
     def cleanup_direct_snapshot(self, location, also_destroy_volume=False,
                                 ignore_errors=False):
         """Unprotects and destroys the name snapshot.

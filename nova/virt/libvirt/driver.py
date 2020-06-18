@@ -2293,6 +2293,68 @@ class LibvirtDriver(driver.ComputeDriver):
             metadata['container_format'] = "bare"
 
         return metadata
+    def take_direct_snapshot(self,context,instance, image_id,snapshot_name):
+        try:
+            guest = self._host.get_guest(instance)
+
+            # TODO(sahid): We are converting all calls from a
+            # virDomain object to use nova.virt.libvirt.Guest.
+            # We should be able to remove virt_dom at the end.
+            virt_dom = guest._domain
+        except exception.InstanceNotFound:
+            raise exception.InstanceNotRunning(instance_id=instance.uuid)
+        
+        disk_path, source_format = libvirt_utils.find_disk(guest)
+
+        root_disk = self.image_backend.by_libvirt_path(
+            instance, disk_path, image_type=source_type)
+
+        try:
+            root_disk.direct_snapshot(context, snapshot_name, image_format, image_id,instance.image_ref)
+        except (NotImplementedError, exception.ImageUnacceptable,
+                exception.Forbidden) as e:
+            if type(e) != NotImplementedError:
+                LOG.warning('Performing standard snapshot because direct '
+                            'snapshot failed: %(error)s',
+                            {'error': encodeutils.exception_to_unicode(e)})
+            failed_snap = metadata.pop('location', None)
+            if failed_snap:
+                failed_snap = {'url': str(failed_snap)}
+            root_disk.cleanup_direct_snapshotf(failed_snap,
+                                                  also_destroy_volume=True,
+                                                  ignore_errors=True)
+            update_task_state(task_state=task_states.IMAGE_PENDING_UPLOAD,
+                              expected_state=task_states.IMAGE_UPLOADING)
+
+            # TODO(nic): possibly abstract this out to the root_disk
+            if source_type == 'rbd' and live_snapshot:
+                # Standard snapshot uses qemu-img convert from RBD which is
+                # not safe to run with live_snapshot.
+                live_snapshot = False
+                # Suspend the guest, so this is no longer a live snapshot
+                self._prepare_domain_for_snapshot(context, live_snapshot,
+                                                  state, instance)
+    def make_rollback_snapshot(self,context,instance, image_id,snapshot_name):
+        try:
+            guest = self._host.get_guest(instance)
+
+            # TODO(sahid): We are converting all calls from a
+            # virDomain object to use nova.virt.libvirt.Guest.
+            # We should be able to remove virt_dom at the end.
+            virt_dom = guest._domain
+        except exception.InstanceNotFound:
+            raise exception.InstanceNotRunning(instance_id=instance.uuid)
+        
+        disk_path, source_format = libvirt_utils.find_disk(guest)
+
+        root_disk = self.image_backend.by_libvirt_path(
+            instance, disk_path, image_type=source_type)
+        try:
+            root_disk.rollback_snapshot(context, snapshot_name, image_format, image_id,instance.image_ref)
+        except (NotImplementedError, exception.ImageUnacceptable,
+                exception.Forbidden) as e:
+
+#edit here
 
     def snapshot(self, context, instance, image_id, update_task_state):
         """Create snapshot from a running VM instance.
@@ -10710,7 +10772,7 @@ class LibvirtDriver(driver.ComputeDriver):
 
     def inject_network_info(self, instance, nw_info):
         pass
-
+    
     def delete_instance_files(self, instance):
         target = libvirt_utils.get_instance_path(instance)
         # A resize may be in progress

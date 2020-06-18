@@ -3822,6 +3822,29 @@ class ComputeManager(manager.Manager):
 
         self._snapshot_instance(context, image_id, instance,
                                 task_states.IMAGE_SNAPSHOT)
+    # Direct snapshot a qcow2 instance with a name    
+    def direct_snapshot(self,context,image_id,instance,snapshot_name):
+    	context = context.elevated()
+
+        instance.power_state = self._get_power_state(context, instance)
+        try:
+            instance.save()
+
+            LOG.info('instance snapshotting', instance=instance)
+
+            if instance.power_state != power_state.RUNNING:
+                state = instance.power_state
+                running = power_state.RUNNING
+                LOG.warning('trying to snapshot a non-running instance: '
+                            '(state: %(state)s expected: %(running)s)',
+                            {'state': state, 'running': running},
+                            instance=instance)
+            self.driver.take_direct_snapshot(context, instance, image_id,snapshot_name)
+        except (exception.InstanceNotFound,
+                exception.InstanceNotRunning,
+                exception.UnexpectedDeletingTaskStateError):
+        	msg = 'Instance disappeared during snapshot'
+            LOG.debug(msg, instance=instance)
 
     def _snapshot_instance(self, context, image_id, instance,
                            expected_task_state):
@@ -3886,7 +3909,10 @@ class ComputeManager(manager.Manager):
             instance.task_state = None
             instance.save()
             LOG.warning("Image not found during snapshot", instance=instance)
-
+    # function to snapshot instance
+    # def _snapshot_kien(self, context, image_id, instance,expected_task_state)
+    # function to restore a snapshot
+    # def _restore_snapshot_kien(self, context, image_id, instance,expected_task_state)
     def _post_interrupted_snapshot_cleanup(self, context, instance):
         self.driver.post_interrupted_snapshot_cleanup(context, instance)
 
