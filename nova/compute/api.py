@@ -3154,6 +3154,49 @@ class API(base.Base):
 
         return image_meta
 
+    def direct_snapshot(self, context, instance, snapshot_name):
+
+        '''instance.task_state = task_states.IMAGE_SNAPSHOT_PENDING
+        try:
+            instance.save(expected_task_state=[None])
+        except (exception.InstanceNotFound,
+                exception.UnexpectedDeletingTaskStateError) as ex:
+            # Changing the instance task state to use in raising the
+            # InstanceInvalidException below
+            LOG.debug('Instance disappeared during snapshot.',
+                      instance=instance)
+            try:
+                image_id = image_meta['id']
+                self.image_api.delete(context, image_id)
+                LOG.info('Image %s deleted because instance '
+                         'deleted before snapshot started.',
+                         image_id, instance=instance)
+            except exception.ImageNotFound:
+                pass
+            except Exception as exc:
+                LOG.warning("Error while trying to clean up image %(img_id)s: "
+                            "%(error_msg)s",
+                            {"img_id": image_meta['id'],
+                             "error_msg": six.text_type(exc)})
+            attr = 'task_state'
+            state = task_states.DELETING
+            if type(ex) == exception.InstanceNotFound:
+                attr = 'vm_state'
+                state = vm_states.DELETED
+            raise exception.InstanceInvalidState(attr=attr,
+                                           instance_uuid=instance.uuid,
+                                           state=state,
+                                           method='snapshot')
+
+        self._record_action_start(context, instance,
+                                  instance_actions.CREATE_IMAGE)
+
+        self.compute_rpcapi.snapshot_instance(context, instance,
+                                              image_meta['id'])'''
+        self.compute_rpcapi.direct_snapshot_instance(context, instance,image_meta['id'],snapshot_name)
+        #return image_meta
+
+
     # NOTE(melwitt): We don't check instance lock for snapshot because lock is
     #                intended to prevent accidental change/delete of instances
     @check_instance_state(vm_state=[vm_states.ACTIVE, vm_states.STOPPED,

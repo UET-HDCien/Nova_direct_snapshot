@@ -3822,8 +3822,38 @@ class ComputeManager(manager.Manager):
 
         self._snapshot_instance(context, image_id, instance,
                                 task_states.IMAGE_SNAPSHOT)
-    # Direct snapshot a qcow2 instance with a name    
-    def direct_snapshot(self,context,image_id,instance,snapshot_name):
+    def direct_snapshot_instance(self, context, image_id, instance,snapshot_name):
+        """Snapshot an instance on this host.
+
+        :param context: security context
+        :param image_id: glance.db.sqlalchemy.models.Image.Id
+        :param instance: a nova.objects.instance.Instance object
+        """
+        # NOTE(dave-mcnally) the task state will already be set by the api
+        # but if the compute manager has crashed/been restarted prior to the
+        # request getting here the task state may have been cleared so we set
+        # it again and things continue normally
+        try:
+            instance.task_state = task_states.IMAGE_SNAPSHOT
+            instance.save(
+                        expected_task_state=task_states.IMAGE_SNAPSHOT_PENDING)
+        except exception.InstanceNotFound:
+            # possibility instance no longer exists, no point in continuing
+            LOG.debug("Instance not found, could not set state %s "
+                      "for instance.",
+                      task_states.IMAGE_SNAPSHOT, instance=instance)
+            return
+
+        except exception.UnexpectedDeletingTaskStateError:
+            LOG.debug("Instance being deleted, snapshot cannot continue",
+                      instance=instance)
+            return
+
+        self._direct_snapshot_instance(context, image_id, instance,snapshot_name)
+
+    # Direct snapshot a qcow2 instance with a name
+    # Edir here    
+    def _direct_snapshot_instance(self,context,image_id,instance,snapshot_name):
     	context = context.elevated()
 
         instance.power_state = self._get_power_state(context, instance)

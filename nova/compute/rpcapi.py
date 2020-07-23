@@ -1302,6 +1302,14 @@ class ComputeAPI(object):
                    instance=instance,
                    image_id=image_id)
 
+    def direct_snapshot_instance(self, ctxt, instance, image_id,snapshot_name):
+        version = '5.0'
+        cctxt = self.router.client(ctxt).prepare(
+                server=_compute_host(None, instance), version=version)
+        cctxt.cast(ctxt, 'direct_snapshot_instance',
+                   instance=instance,
+                   image_id=image_id,snapshot_name=snapshot_name)
+
     def start_instance(self, ctxt, instance):
         version = '5.0'
         cctxt = self.router.client(ctxt).prepare(
