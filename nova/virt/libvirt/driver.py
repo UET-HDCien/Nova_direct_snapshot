@@ -2125,6 +2125,106 @@ class LibvirtDriver(driver.ComputeDriver):
                         ignore_errors=True)
 
         LOG.info("Snapshot image upload complete", instance=instance)
+    def driver_direct_snapshot(self, context, instance,snapshot_name):
+        try:
+            guest = self._host.get_guest(instance)
+
+            # TODO(sahid): We are converting all calls from a
+            # virDomain object to use nova.virt.libvirt.Guest.
+            # We should be able to remove virt_dom at the end.
+            virt_dom = guest._domain
+        except exception.InstanceNotFound:
+            raise exception.InstanceNotRunning(instance_id=instance.uuid)
+
+        snapshot = self._image_api.get(context, image_id)
+
+        # source_format is an on-disk format
+        # source_type is a backend type
+        disk_path, source_format = libvirt_utils.find_disk(guest)
+        source_type = libvirt_utils.get_disk_type_from_path(disk_path)
+
+        # We won't have source_type for raw or qcow2 disks, because we can't
+        # determine that from the path. We should have it from the libvirt
+        # xml, though.
+        if source_type is None:
+            source_type = source_format
+        # For lxc instances we won't have it either from libvirt xml
+        # (because we just gave libvirt the mounted filesystem), or the path,
+        # so source_type is still going to be None. In this case,
+        # root_disk is going to default to CONF.libvirt.images_type
+        # below, which is still safe.
+
+        image_format = CONF.libvirt.snapshot_image_format or source_type
+
+        # NOTE(bfilippov): save lvm and rbd as raw
+        if image_format == 'lvm' or image_format == 'rbd':
+            image_format = 'raw'
+
+        state = guest.get_power_state(self._host)
+
+        # NOTE(dgenin): Instances with LVM encrypted ephemeral storage require
+        #               cold snapshots. Currently, checking for encryption is
+        #               redundant because LVM supports only cold snapshots.
+        #               It is necessary in case this situation changes in the
+        #               future.
+        if (self._host.has_min_version(hv_type=host.HV_DRIVER_QEMU)
+                and source_type not in ('lvm')
+                and not CONF.ephemeral_storage_encryption.enabled
+                and not CONF.workarounds.disable_libvirt_livesnapshot
+                # NOTE(rmk): We cannot perform live snapshots when a
+                # managedSave file is present, so we will use the cold/legacy
+                # method for instances which are shutdown or paused.
+                # NOTE(mriedem): Live snapshot doesn't work with paused
+                # instances on older versions of libvirt/qemu. We can likely
+                # remove the restriction on PAUSED once we require
+                # libvirt>=3.6.0 and qemu>=2.10 since that works with the
+                # Pike Ubuntu Cloud Archive testing in Queens.
+                and state not in (power_state.SHUTDOWN, power_state.PAUSED)):
+            live_snapshot = True
+            # Abort is an idempotent operation, so make sure any block
+            # jobs which may have failed are ended. This operation also
+            # confirms the running instance, as opposed to the system as a
+            # whole, has a new enough version of the hypervisor (bug 1193146).
+            try:
+                guest.get_block_device(disk_path).abort_job()
+            except libvirt.libvirtError as ex:
+                error_code = ex.get_error_code()
+                if error_code == libvirt.VIR_ERR_CONFIG_UNSUPPORTED:
+                    live_snapshot = False
+                else:
+                    pass
+        else:
+            live_snapshot = False
+
+        root_disk = self.image_backend.by_libvirt_path(
+            instance, disk_path, image_type=source_type)
+
+        if live_snapshot:
+            LOG.info("Beginning live snapshot process", instance=instance)
+        else:
+            LOG.info("Beginning cold snapshot process", instance=instance)
+
+        try:
+            metadata['location'] = root_disk.direct_snapshot_kien(
+                context, snapshot_name)
+        except (NotImplementedError, exception.ImageUnacceptable,
+                exception.Forbidden) as e:
+            if type(e) != NotImplementedError:
+                LOG.warning('Performing standard snapshot because direct '
+                            'snapshot failed: %(error)s',
+                            {'error': encodeutils.exception_to_unicode(e)})
+        except Exception:
+            with excutils.save_and_reraise_exception():
+                LOG.exception(_("Failed to snapshot image"))
+                failed_snap = metadata.pop('location', None)
+                if failed_snap:
+                    failed_snap = {'url': str(failed_snap)}
+                root_disk.cleanup_direct_snapshot(
+                        failed_snap, also_destroy_volume=True,
+                        ignore_errors=True)
+
+        LOG.info("Snapshot image complete", instance=instance)
+
 
     def _prepare_domain_for_snapshot(self, context, live_snapshot, state,
                                      instance):

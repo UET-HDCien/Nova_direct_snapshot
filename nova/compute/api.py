@@ -2879,6 +2879,56 @@ class API(base.Base):
 
         return image_meta
 
+    @check_instance_cell
+    @check_instance_state(vm_state=[vm_states.ACTIVE, vm_states.STOPPED,
+                                    vm_states.PAUSED, vm_states.SUSPENDED])
+    def direct_snapshot(self, context, instance, snapshot_name, extra_properties=None):
+        """Snapshot the given instance.
+
+        :param instance: nova.objects.instance.Instance object
+        :param name: name of the snapshot
+        :param extra_properties: dict of extra image properties to include
+                                 when creating the image.
+        :returns: A dict containing image metadata
+        """
+        try:
+            instance.save(expected_task_state=[None])
+        except (exception.InstanceNotFound,
+                exception.UnexpectedDeletingTaskStateError) as ex:
+            # Changing the instance task state to use in raising the
+            # InstanceInvalidException below
+            LOG.debug('Instance disappeared during snapshot.',
+                      instance=instance)
+            try:
+                image_id = image_meta['id']
+                self.image_api.delete(context, image_id)
+                LOG.info('Image %s deleted because instance '
+                         'deleted before snapshot started.',
+                         image_id, instance=instance)
+            except exception.ImageNotFound:
+                pass
+            except Exception as exc:
+                LOG.warning("Error while trying to clean up image %(img_id)s: "
+                            "%(error_msg)s",
+                            {"img_id": image_meta['id'],
+                             "error_msg": six.text_type(exc)})
+            attr = 'task_state'
+            state = task_states.DELETING
+            if type(ex) == exception.InstanceNotFound:
+                attr = 'vm_state'
+                state = vm_states.DELETED
+            raise exception.InstanceInvalidState(attr=attr,
+                                           instance_uuid=instance.uuid,
+                                           state=state,
+                                           method='snapshot')
+
+        self._record_action_start(context, instance,
+                                  instance_actions.CREATE_IMAGE)
+
+        self.compute_rpcapi.direct_snapshot_instance(context, instance,snapshot_name)
+
+        return true
+
     def _create_image(self, context, instance, name, image_type,
                       extra_properties=None):
         """Create new image entry in the image service.  This new image

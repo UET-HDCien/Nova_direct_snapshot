@@ -1087,6 +1087,16 @@ class Rbd(Image):
         return ('rbd://%(fsid)s/%(pool)s/%(image)s/snap' %
                 dict(fsid=fsid, pool=parent_pool, image=image_id))
 
+    def direct_snapshot_kien(self, context, snapshot_name):
+        fsid = self.driver.get_fsid()
+        self.driver.create_snap(self.rbd_name, snapshot_name, protect=True)
+        location = {'url': 'rbd://%(fsid)s/%(pool)s/%(image)s/%(snap)s' %
+            dict(fsid=fsid,
+            pool=self.pool,
+            image=self.rbd_name,
+            snap=snapshot_name)}
+        return location
+
     def cleanup_direct_snapshot(self, location, also_destroy_volume=False,
                                 ignore_errors=False):
         """Unprotects and destroys the name snapshot.

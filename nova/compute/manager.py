@@ -3473,7 +3473,7 @@ class ComputeManager(manager.Manager):
     def _do_snapshot_instance(self, context, image_id, instance):
         self._snapshot_instance(context, image_id, instance,
                                 task_states.IMAGE_BACKUP)
-
+    def 
     @wrap_exception()
     @reverts_task_state
     @wrap_instance_event(prefix='compute')
@@ -3522,6 +3522,81 @@ class ComputeManager(manager.Manager):
 
         self._snapshot_instance(context, image_id, instance,
                                 task_states.IMAGE_SNAPSHOT)
+    def direct_snapshot_instance(self, context, instance, snapshot_name):
+        """Snapshot an instance on this host.
+
+        :param context: security context
+        :param image_id: glance.db.sqlalchemy.models.Image.Id
+        :param instance: a nova.objects.instance.Instance object
+        """
+        # NOTE(dave-mcnally) the task state will already be set by the api
+        # but if the compute manager has crashed/been restarted prior to the
+        # request getting here the task state may have been cleared so we set
+        # it again and things continue normally
+        try:
+            instance.task_state = task_states.IMAGE_SNAPSHOT
+            instance.save(
+                        expected_task_state=task_states.IMAGE_SNAPSHOT_PENDING)
+        except exception.InstanceNotFound:
+            # possibility instance no longer exists, no point in continuing
+            LOG.debug("Instance not found, could not set state %s "
+                      "for instance.",
+                      task_states.IMAGE_SNAPSHOT, instance=instance)
+            return
+
+        except exception.UnexpectedDeletingTaskStateError:
+            LOG.debug("Instance being deleted, snapshot cannot continue",
+                      instance=instance)
+            return
+
+        self._direct_snapshot_instance(context, instance, snapshot_name)
+        
+    def _direct_snapshot_instance(self, context, instance,snapshot_name):
+        context = context.elevated()
+        instance.power_state = self._get_power_state(context, instance)
+        try:
+            instance.save()
+
+            LOG.info('instance snapshotting', instance=instance)
+
+            if instance.power_state != power_state.RUNNING:
+                state = instance.power_state
+                running = power_state.RUNNING
+                LOG.warning('trying to snapshot a non-running instance: '
+                            '(state: %(state)s expected: %(running)s)',
+                            {'state': state, 'running': running},
+                            instance=instance)
+
+            self._notify_about_instance_usage(
+                context, instance, "snapshot.start")
+            compute_utils.notify_about_instance_snapshot(context, instance,
+                self.host, phase=fields.NotificationPhase.START,
+                snapshot_image_id=image_id)
+
+            self.driver.driver_direct_snapshot(context, instance, snapshot_name)
+
+            self._notify_about_instance_usage(context, instance,
+                                              "snapshot.end")
+            compute_utils.notify_about_instance_snapshot(context, instance,
+                self.host, phase=fields.NotificationPhase.END,
+                snapshot_image_id=image_id)
+        except (exception.InstanceNotFound,
+                exception.UnexpectedDeletingTaskStateError):
+            # the instance got deleted during the snapshot
+            # Quickly bail out of here
+            msg = 'Instance disappeared during snapshot'
+            LOG.debug(msg, instance=instance)
+            try:
+                image = self.image_api.get(context, image_id)
+                if image['status'] != 'active':
+                    self.image_api.delete(context, image_id)
+            except Exception:
+                LOG.warning("Error while trying to clean up image %s",
+                            image_id, instance=instance)
+        except exception.ImageNotFound:
+            instance.task_state = None
+            instance.save()
+            LOG.warning("Image not found during snapshot", instance=instance)
 
     def _snapshot_instance(self, context, image_id, instance,
                            expected_task_state):
