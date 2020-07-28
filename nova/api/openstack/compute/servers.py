@@ -1051,6 +1051,48 @@ class ServersController(wsgi.Controller):
         resp.headers['Location'] = image_ref
         return resp
 
+    @wsgi.response(202)
+    @wsgi.expected_errors((400, 403, 404, 409))
+    @wsgi.action('snapshotImage')
+    @common.check_snapshots_enabled
+    @validation.schema(schema_servers.snapshot_image, '2.0', '2.0')
+    @validation.schema(schema_servers.snapshot_image, '2.1')
+    def _action_snapshot_image(self, req, id, body):
+        """Snapshot a server instance."""
+        context = req.environ['nova.context']
+        context.can(server_policies.SERVERS % 'snapshot_image')
+        instance = self._get_server(context, req, id)
+
+        bdms = objects.BlockDeviceMappingList.get_by_instance_uuid(
+                    context, instance.uuid)
+
+        try:
+            if compute_utils.is_volume_backed_instance(context, instance,
+                                                          bdms):
+                context.can(server_policies.SERVERS %
+                    'snapshot_image:allow_volume_backed')
+                '''image = self.compute_api.snapshot_volume_backed(
+                                                       context,
+                                                       instance,
+                                                       image_name,
+                                                       extra_properties=
+                                                       metadata)'''
+            else:
+                image = self.compute_api.direct_snapshot_kien(context,instance,snapshot_name)
+        except exception.InstanceUnknownCell as e:
+            raise exc.HTTPNotFound(explanation=e.format_message())
+        except exception.InstanceInvalidState as state_error:
+            common.raise_http_conflict_for_instance_invalid_state(state_error,
+                        'snapshotImage', id)
+        except exception.Invalid as err:
+            raise exc.HTTPBadRequest(explanation=err.format_message())
+        except exception.OverQuota as e:
+            raise exc.HTTPForbidden(explanation=e.format_message())
+
+        # Starting with microversion 2.45 we return a response body containing
+        # the snapshot image id without the Location header.
+        return true
+
     def _get_server_admin_password(self, server):
         """Determine the admin password for a server on creation."""
         if 'adminPass' in server:

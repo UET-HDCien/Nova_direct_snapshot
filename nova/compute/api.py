@@ -2882,7 +2882,7 @@ class API(base.Base):
     @check_instance_cell
     @check_instance_state(vm_state=[vm_states.ACTIVE, vm_states.STOPPED,
                                     vm_states.PAUSED, vm_states.SUSPENDED])
-    def direct_snapshot(self, context, instance, snapshot_name, extra_properties=None):
+    def direct_snapshot_kien(self, context, instance, snapshot_name, extra_properties=None):
         """Snapshot the given instance.
 
         :param instance: nova.objects.instance.Instance object
@@ -2899,19 +2899,6 @@ class API(base.Base):
             # InstanceInvalidException below
             LOG.debug('Instance disappeared during snapshot.',
                       instance=instance)
-            try:
-                image_id = image_meta['id']
-                self.image_api.delete(context, image_id)
-                LOG.info('Image %s deleted because instance '
-                         'deleted before snapshot started.',
-                         image_id, instance=instance)
-            except exception.ImageNotFound:
-                pass
-            except Exception as exc:
-                LOG.warning("Error while trying to clean up image %(img_id)s: "
-                            "%(error_msg)s",
-                            {"img_id": image_meta['id'],
-                             "error_msg": six.text_type(exc)})
             attr = 'task_state'
             state = task_states.DELETING
             if type(ex) == exception.InstanceNotFound:

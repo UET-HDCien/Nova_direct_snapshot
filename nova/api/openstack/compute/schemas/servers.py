@@ -263,6 +263,25 @@ create_image_v20 = copy.deepcopy(create_image)
 create_image_v20['properties']['createImage'][
     'properties']['name'] = parameter_types.name_with_leading_trailing_spaces
 
+# Add here 
+snapshot_image = {
+    'type': 'object',
+    'properties': {
+        'snapshotImage': {
+            'type': 'object',
+            'properties': {
+                'name': parameter_types.name
+            },
+            'required': ['name'],
+            'additionalProperties': False
+        }
+    },
+    'required': ['snapshotImage'],
+    'additionalProperties': False
+}
+snapshot_image_v20 = copy.deepcopy(snapshot_image)
+snapshot_image_v20['properties']['createImage'][
+    'properties']['name'] = parameter_types.name_with_leading_trailing_spaces
 
 reboot = {
     'type': 'object',
